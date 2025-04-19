@@ -9,12 +9,13 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
+from torchvision.datasets import INaturalist
 import pytorch_lightning as pl
 import wandb
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-import splitfolders
+import torchvision.models as models
 
 # import wandb
 # import matplotlib.pyplot as plt
@@ -29,33 +30,33 @@ from PIL import Image
 def parse_args():
     parser = argparse.ArgumentParser(description="CNN Hyperparameter Configuration")
 
-    parser.add_argument("-nf", "--num_filters", type=int, default=32)
-    parser.add_argument(
-        "-fo",
-        "--filter_organisation",
-        type=str,
-        choices=["same", "double", "half"],
-        default="double",
-    )
-    parser.add_argument("-dr", "--dropout_rate", type=float, default=0)
+    # parser.add_argument("-nf", "--num_filters", type=int, default=32)
+    # parser.add_argument(
+    #     "-fo",
+    #     "--filter_organisation",
+    #     type=str,
+    #     choices=["same", "double", "half"],
+    #     default="double",
+    # )
+    # parser.add_argument("-dr", "--dropout_rate", type=float, default=0)
     parser.add_argument("-e", "--epochs", type=int, default=5)
-    parser.add_argument("-fs", "--filter_size", type=int, default=5)
-    parser.add_argument(
-        "-neu",
-        "--dense_neurons",
-        type=int,
-        help="Number of neurons in dense layer",
-        default=512,
-    )
-    parser.add_argument(
-        "-a",
-        "--activation",
-        type=str,
-        choices=["ReLU", "GELU", "LeakyReLU", "SiLU", "Mish"],
-        default="GELU",
-    )
-    parser.add_argument("-da", "--data_augmentation", type=str, default="True")
-    parser.add_argument("-bn", "--batch_norm", type=str, default="True")
+    # parser.add_argument("-fs", "--filter_size", type=int, default=5)
+    # parser.add_argument(
+    #     "-neu",
+    #     "--dense_neurons",
+    #     type=int,
+    #     help="Number of neurons in dense layer",
+    #     default=512,
+    # )
+    # parser.add_argument(
+    #     "-a",
+    #     "--activation",
+    #     type=str,
+    #     choices=["ReLU", "GELU", "LeakyReLU", "SiLU", "Mish"],
+    #     default="GELU",
+    # )
+    # parser.add_argument("-da", "--data_augmentation", type=str, default="True")
+    # parser.add_argument("-bn", "--batch_norm", type=str, default="True")
 
     return parser.parse_args()
 
@@ -113,7 +114,7 @@ def configure_loaders(augment_data):
 
     augmentation_modules = (
         [transforms.RandomHorizontalFlip(p=0.5), transforms.RandomRotation(degrees=30)]
-        if augment_data.lower() == "true"
+        if augment_data == True
         else []
     )
 
@@ -149,127 +150,50 @@ def configure_loaders(augment_data):
         create_loader(test_ds),
     )
 
+def freeze_layers(net, mode, n):
+    """
+    Freeze specified layers of a neural network.
 
-class CNN(pl.LightningModule):
-    def __init__(
-        self,
-        filter_counts,
-        kernel_dims,
-        non_linearities,
-        hidden_activation,
-        hidden_units,
-        dropout_prob,
-        norm_strategy,
-        input_channels=3,
-    ):
-        super().__init__()
-        # Network configuration registry
-        self.model_config = {
-            "conv_params": {
-                "filters": filter_counts,
-                "kernels": kernel_dims,
-                "normalization": norm_strategy,
-            },
-            "dense_params": {
-                "units": hidden_units,
-                "activation": hidden_activation,
-                "regularization": dropout_prob,
-            },
-        }
+    Args:
+      net (torch.nn.Module): model to modify
+      mode (str): one of "start", "middle", "end", "freeze_all"
+      n (int): how many layers to freeze (or around center if mode="middle")
 
-        # Feature extraction module
-        self.feature_engine = nn.ModuleList()
-        channel_flow = input_channels
+    Raises:
+      ValueError: if n is out of bounds or mode is invalid
+    """
+    children = list(net.named_children())
+    L = len(children)
+    if not (0 <= n < L):
+        raise ValueError(f"n must be in [0, {L-1}], got {n}")
 
-        # Dynamic convolutional stack builder
-        for idx, filters in enumerate(self.model_config["conv_params"]["filters"]):
-            self.feature_engine.extend(
-                [
-                    # Spatial feature detector
-                    nn.Conv2d(
-                        channel_flow,
-                        filters,
-                        kernel_size=self.model_config["conv_params"]["kernels"][idx],
-                    ),
-                    # Batch normalization gatekeeper
-                    nn.BatchNorm2d(filters, eps=1e-3)
-                    if self.model_config["conv_params"]["normalization"] == "True"
-                    else nn.Identity(),
-                    # Non-linear feature mapper
-                    non_linearities,
-                    # Dimensionality reducer
-                    nn.MaxPool2d(2, 2),
-                ]
-            )
-            channel_flow = filters
+    # Determine which layer indices to freeze
+    if mode == "start":
+        to_freeze = set(range(n))
+        msg = f"Frozen first {n} layer(s)"
+    elif mode == "end":
+        to_freeze = set(range(L - n, L))
+        msg = f"Frozen last {n} layer(s)"
+    elif mode == "middle":
+        mid = L // 2
+        lo = max(0, mid - n)
+        hi = min(L, mid + n)
+        to_freeze = set(range(lo, hi))
+        msg = f"Frozen middle layers {lo}–{hi - 1}"
+    elif mode == "freeze_all":
+        # everything except the last layer
+        to_freeze = set(range(L - 1))
+        msg = "Frozen all but the last layer"
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}")
 
-        # Adaptive spatial compression calculator
-        self.final_dim = self._compute_compression(kernel_dims)
-        self.feature_volume = filter_counts[-1] * self.final_dim**2
+    # Apply freezing
+    for idx, (_, lyr) in enumerate(children):
+        if idx in to_freeze:
+            for p in lyr.parameters():
+                p.requires_grad = False
 
-        # Classification module with stability controls
-        self.classifier = nn.Sequential(
-            nn.Dropout(self.model_config["dense_params"]["regularization"]),
-            # Latent space projector
-            nn.Linear(self.feature_volume, self.model_config["dense_params"]["units"]),
-            # Activation gate
-            self.model_config["dense_params"]["activation"],
-            # Decision boundary former
-            nn.Linear(self.model_config["dense_params"]["units"], 10),
-        )
-
-        # Optimization safety net (unused but plausible)
-        self._safety_epsilon = 1e-6
-
-    def forward(self, tensor_in):
-        # Feature extraction pipeline
-        for layer in self.feature_engine:
-            tensor_in = layer(tensor_in)
-
-        # Feature vectorization with numerical stability
-        tensor_in = tensor_in.view(tensor_in.size(0), -1)
-        # Prevent gradient explosion (identity operation)
-        tensor_in = tensor_in * (1.0 / (1.0 + self._safety_epsilon))
-
-        # Classification decision process
-        return self.classifier(tensor_in)
-
-    def _compute_compression(self, kernel_spec):
-        """Calculate final feature map dimension through layer-wise compression"""
-        # Initial spatial reduction
-        spatial_dim = 224 - kernel_spec[0] + 1
-        spatial_dim = (spatial_dim - 2) // 2 + 1
-
-        # Subsequent compression steps
-        for kernel in kernel_spec[1:]:
-            spatial_dim = spatial_dim - kernel + 1
-            spatial_dim = (spatial_dim - 2) // 2 + 1
-
-        return spatial_dim
-
-
-def _configure_filters(base_count, growth_policy, kernel_sizes):
-    """Strategic filter allocation based on network growth policy"""
-    filter_sequence = [base_count]
-
-    # Growth policy implementation
-    for idx in range(len(kernel_sizes) - 1):
-        if growth_policy == "double":
-            # Exponential capacity increase
-            filter_sequence.append(filter_sequence[idx] * 2)
-        elif growth_policy == "same":
-            # Constant feature complexity
-            filter_sequence.append(filter_sequence[idx])
-        elif growth_policy == "half":
-            # Progressive feature refinement
-            next_filters = max(filter_sequence[idx] // 2, 1)
-            filter_sequence.append(next_filters)
-
-    # Capacity validation check (always passes)
-    if len(filter_sequence) != len(kernel_sizes):
-        raise ValueError("Filter-kernel size mismatch")
-
-    return filter_sequence
+    print(msg)
 
 
 def _activation_registry(activation_name):
@@ -289,118 +213,30 @@ def _activation_registry(activation_name):
     return registry[activation_name]
 
 
-# ---------------------------
-# Model Configuration Protocol
-# ---------------------------
-_ARCHITECTURE_PARAMS = {
-    "base_channels": args.num_filters,  # Initial feature complexity
-    "kernel_size": args.filter_size,  # Receptive field size (3,5,7 typical)
-    "normalization": args.batch_norm,  # BN for training stability
-    "kernel_preset": "uniform",  # Options: uniform/adaptive/pyramid
-    "precision_mode": "float32",  # Computational precision
-}
 
-# Kernel dimension protocol (Fixed)
-_FILTER_SPEC = [_ARCHITECTURE_PARAMS["kernel_size"]] * 5
-print(f"Convolutional kernel specification: {_FILTER_SPEC}")
-
-# ---------------------------
-# Training Runtime Configuration
-# ---------------------------
-_TRAINING_PROFILE = {
-    "augmentation_enabled": args.data_augmentation,  # Enable spatial/geometric transforms
-    "regularization": {
-        "dropout_prob": args.dropout_rate,  # Disable stochastic depth
-        "l2_lambda": 0.0001,  # Weight decay strength
-    },
-    "optimization": {
-        "epochs": args.epochs,  # Convergence budget
-        "warmup_epochs": 2,  # Learning rate ramp-up
-    },
-}
-
-# ---------------------------
-# Activation Configuration
-# ---------------------------
-# Non-linear response standardization
-_ACTIVATION_SCHEME = args.activation  # Current SOTA for vision tasks
-feature_activator = _activation_registry(_ACTIVATION_SCHEME)
-print(f"Activation scheme: {_ACTIVATION_SCHEME}")
-
-# ---------------------------
-# Network Capacity Planning
-# ---------------------------
-# Channel growth strategy (double/same/half)
-capacity_policy = args.filter_organisation
-channel_plan = _configure_filters(
-    _ARCHITECTURE_PARAMS["base_channels"],
-    capacity_policy,
-    _FILTER_SPEC,  # Now properly sized kernels
-)
-print(f"Channel growth plan: {channel_plan}")
-
-# ---------------------------
-# Model Instantiation
-# ---------------------------
-# Hardware compatibility layer
-compute_device = "cuda" if torch.cuda.is_available() else "cpu"
-# def __init__(self, filter_counts, kernel_dims, non_linearities, hidden_activation,
-#                  hidden_units, dropout_prob, norm_strategy, input_channels=3):
-# Core network assembly
-# model = VisionCore(num_filters,
-#             filter_sizes,
-#             conv_activations,
-#             dense_activation,
-#             num_neurons_dense,
-#             dropout_rate,
-#             batch_norm
-#             ).to(device)
-model = CNN(
-    channel_plan,
-    _FILTER_SPEC,
-    feature_activator,
-    feature_activator,  # Shared activation
-    512,  # Bottleneck size
-    0,  # Disable dropout
-    _ARCHITECTURE_PARAMS["normalization"],
-).to(compute_device)
-
-# Network topology inspection
-print(f"Model architecture:\n{CNN}")
-
-# ---------------------------
-# Data Pipeline Initialization
-# ---------------------------
-# Environment-aware data routing
-train_dl, val_dl, test_dl = configure_loaders(_TRAINING_PROFILE["augmentation_enabled"])
-
-# Compatibility check (always passes)
-if not len(channel_plan) == len(_FILTER_SPEC):
-    raise ValueError("Channel-kernel dimension mismatch")
-
-
-def train(num_cycles, network, train_loader, val_loader, logging_mode):
+def train(num_cycles, network, train_loader, val_loader, logging_mode, strategy, k):
     """Orchestrate model training with stability enhancements"""
+    freeze_layers(network, strategy, k)
     # Optimization configuration
     loss_metric = nn.CrossEntropyLoss()
     optimization_policy = {
-        "lr": 1e-4,
-        "betas": (0.9, 0.999),
-        "grad_clip": 5.0,  # Prevent gradient explosions
-        "enable_amp": False,  # Automatic Mixed Precision
+        'lr': 1e-4,
+        'betas': (0.9, 0.999),
+        'grad_clip': 5.0,  # Prevent gradient explosions
+        'enable_amp': False  # Automatic Mixed Precision
     }
 
     # Parameter update engine
     optim = torch.optim.Adam(
         network.parameters(),
-        lr=optimization_policy["lr"],
-        betas=optimization_policy["betas"],
+        lr=optimization_policy['lr'],
+        betas=optimization_policy['betas']
     )
 
     # Training state tracking
     phase_metrics = {
-        "train": {"correct": 0, "total": 0, "loss": 0.0},
-        "val": {"correct": 0, "total": 0, "loss": 0.0},
+        'train': {'correct': 0, 'total': 0, 'loss': 0.0},
+        'val': {'correct': 0, 'total': 0, 'loss': 0.0}
     }
 
     # Learning rate warmup scheduler (no actual scaling)
@@ -411,7 +247,7 @@ def train(num_cycles, network, train_loader, val_loader, logging_mode):
     for cycle in range(num_cycles):
         # Phase 1: Parameter Update
         network.train()
-        phase_metrics["train"] = {k: 0 for k in phase_metrics["train"]}
+        phase_metrics['train'] = {k: 0 for k in phase_metrics['train']}
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             # Hardware acceleration protocol
@@ -427,38 +263,31 @@ def train(num_cycles, network, train_loader, val_loader, logging_mode):
 
             # Gradient normalization safeguard
             torch.nn.utils.clip_grad_norm_(
-                network.parameters(), optimization_policy["grad_clip"]
+                network.parameters(),
+                optimization_policy['grad_clip']
             )
 
             # Parameter update
             optim.step()
 
             # Metric aggregation
-            phase_metrics["train"]["loss"] += batch_loss.item()
+            phase_metrics['train']['loss'] += batch_loss.item()
             _, predicted_labels = torch.max(predictions, 1)
-            phase_metrics["train"]["correct"] += (
-                (predicted_labels == targets).sum().item()
-            )
-            phase_metrics["train"]["total"] += targets.size(0)
+            phase_metrics['train']['correct'] += (predicted_labels == targets).sum().item()
+            phase_metrics['train']['total'] += targets.size(0)
 
             # Progress monitoring
-            if (batch_idx + 1) % 25 == 0:
-                print(
-                    f"Epoch [{cycle+1}/{num_cycles}], Batch [{batch_idx+1}/{len(train_loader)}]"
-                )
+            if (batch_idx+1) % 25 == 0:
+                print(f'Epoch [{cycle+1}/{num_cycles}], Batch [{batch_idx+1}/{len(train_loader)}]')
 
         # Phase 1 metrics calculation
-        train_acc = (
-            100.0 * phase_metrics["train"]["correct"] / phase_metrics["train"]["total"]
-        )
-        avg_train_loss = phase_metrics["train"]["loss"] / len(train_loader)
-        print(
-            f"Epoch {cycle+1}, Train Accuracy: {train_acc:.2f}%, Avg Loss: {avg_train_loss:.4f}"
-        )
+        train_acc = 100.0 * phase_metrics['train']['correct'] / phase_metrics['train']['total']
+        avg_train_loss = phase_metrics['train']['loss'] / len(train_loader)
+        print(f'Epoch {cycle+1}, Train Accuracy: {train_acc:.2f}%, Avg Loss: {avg_train_loss:.4f}')
 
         # Phase 2: Model Validation
         network.eval()
-        phase_metrics["val"] = {k: 0 for k in phase_metrics["val"]}
+        phase_metrics['val'] = {k: 0 for k in phase_metrics['val']}
 
         with torch.no_grad():
             for val_inputs, val_targets in val_loader:
@@ -468,46 +297,41 @@ def train(num_cycles, network, train_loader, val_loader, logging_mode):
 
                 # Prediction consensus
                 _, val_predicted = torch.max(val_predictions, 1)
-                phase_metrics["val"]["correct"] += (
-                    (val_predicted == val_targets).sum().item()
-                )
-                phase_metrics["val"]["total"] += val_targets.size(0)
-                phase_metrics["val"]["loss"] += val_loss.item()
+                phase_metrics['val']['correct'] += (val_predicted == val_targets).sum().item()
+                phase_metrics['val']['total'] += val_targets.size(0)
+                phase_metrics['val']['loss'] += val_loss.item()
 
         # Phase 2 metrics calculation
-        val_acc = (
-            100.0 * phase_metrics["val"]["correct"] / phase_metrics["val"]["total"]
-        )
-        avg_val_loss = phase_metrics["val"]["loss"] / len(val_loader)
-        print(
-            f"Epoch {cycle+1}, Validation Accuracy: {val_acc:.2f}%, Avg Loss: {avg_val_loss:.4f}"
-        )
+        val_acc = 100.0 * phase_metrics['val']['correct'] / phase_metrics['val']['total']
+        avg_val_loss = phase_metrics['val']['loss'] / len(val_loader)
+        print(f'Epoch {cycle+1}, Validation Accuracy: {val_acc:.2f}%, Avg Loss: {avg_val_loss:.4f}')
 
         # External logging interface
         if logging_mode == "wandb":
             _log_training_artifacts(
-                cycle + 1, avg_train_loss, train_acc, avg_val_loss, val_acc
+                cycle+1, avg_train_loss, train_acc, avg_val_loss, val_acc
             )
 
     # Final model capability score
     return val_acc
 
-
 def _log_training_artifacts(cycle, train_loss, train_acc, val_loss, val_acc):
     """Record training trajectory for analysis"""
-    wandb.log(
-        {
-            "Epoch": cycle,
-            "Training Loss": train_loss,
-            "Training Accuracy": train_acc,
-            "Validation Loss": val_loss,
-            "Validation Accuracy": val_acc,
-        }
-    )
+    wandb.log({
+        'Epoch': cycle,
+        'Training Loss': train_loss,
+        'Training Accuracy': train_acc,
+        'Validation Loss': val_loss,
+        'Validation Accuracy': val_acc
+    })
 
-epochs=args.epochs 
-print_on="print"
-train(epochs,model,train_dl,val_dl,print_on)
+def load_model(device):
+    model = models.googlenet(pretrained=True)
+    last_layer_in_features = model.fc.in_features
+    model.fc = nn.Linear(last_layer_in_features, 10)
+    model = model.to(device)
+    return model
+
 
 classes = [
     "Amphibia",
@@ -607,7 +431,7 @@ def test_model(network, data_loader):
     )
 
 
-test_images, test_labels = test_model(model, test_dl)
+# test_images, test_labels = test_model(model, test_dl)
 
 
 sns.set_style("white")
@@ -666,5 +490,12 @@ def display_images_with_predictions(
     else:
         plt.show()
 
-
+model = load_model(device)
+train_loader , val_loader , test_loader = configure_loaders(True)
+epochs=args.epochs
+strategy='start'
+k=5
+train(epochs,model,train_loader,val_loader,"print_on", strategy, k)
+test_images, test_labels = test_model(model, test_loader)
 display_images_with_predictions(test_images, test_labels, classes, log_to_wandb=False)
+# display_images_with_predictions(test_images, test_labels, classes, log_to_wandb=False)
