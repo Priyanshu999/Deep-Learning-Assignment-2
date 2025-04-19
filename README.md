@@ -47,19 +47,13 @@ The main objective is to understand how different training strategies affect mod
   - Start by cloning the provided wandb report template and populate it throughout the assignment.
 
 
-## 📁 Project Structure
+## Project Structure
 
 This repository contains two parts — **PartA** and **PartB** — of the Deep Learning assignment/project. Each part includes:
 
 - A Jupyter notebook showcasing model runs, training logs, and results
 - A Python script to train the network from scratch
 - Folder-level README files with detailed training instructions
-
----
-DeepLearning-Project/ │ ├── PartA/ │ ├── PartA_notebook.ipynb # Contains model implementation and results │ ├── train_partA.py # Script to train the model │ └── README.md # Instructions for running and training │ ├── PartB/ │ ├── PartB_notebook.ipynb # Contains model implementation and results │ ├── train_partB.py # Script to train the model │ └── README.md # Instructions for running and training │ └── README.md # Main README file (you're here)
-
-
----
 
 ### 🔧 How to Use
 
