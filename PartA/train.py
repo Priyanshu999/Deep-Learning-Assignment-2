@@ -81,10 +81,10 @@ print("Currently Using ::", device)
 
 # ============================== Dataset Split ================================
 
-# data_path = "/content/drive/MyDrive/nature_12k/inaturalist_12K/train"
-# output_path = "train_val"
+data_path = "/content/drive/MyDrive/nature_12k/inaturalist_12K/train"
+output_path = "train_val"
 
-# splitfolders.ratio(input=data_path, output=output_path, seed=42, ratio=(0.8, 0.2))
+splitfolders.ratio(input=data_path, output=output_path, seed=42, ratio=(0.8, 0.2))
 
 # ============================ Data Preparation ===============================
 
