@@ -6,15 +6,16 @@
 Welcome to this repository! 
 
 ## Table of Contents  
-1. [Project Title & Description](#project-title--description)  
-2. [Features](#features)  
-3. [Installation & Dependencies](#installation--dependencies)  
-4. [Usage](#usage)  
+1. [Project Title & Description](#project-title--description)
+2. [Project Structure](#project-structure)
+3. [Features](#features)  
+4. [Installation & Dependencies](#installation--dependencies)  
+5. [Usage](#usage)  
 6. [Dataset](#dataset)    
 7. [Acknowledgments](#acknowledgements)
     
 
-# Fully Connected Feedforward Neural Network  
+# Convolutional Neural Network
 
 ## Project Title & Description  
 
@@ -44,7 +45,36 @@ The main objective is to understand how different training strategies affect mod
 - ✅ **Reporting & Visualization**
   - Use **wandb.ai** to log metrics, visualize training curves, filter activations, and generate the final report.
   - Start by cloning the provided wandb report template and populate it throughout the assignment.
- 
+
+
+## 📁 Project Structure
+
+This repository contains two parts — **PartA** and **PartB** — of the Deep Learning assignment/project. Each part includes:
+
+- A Jupyter notebook showcasing model runs, training logs, and results
+- A Python script to train the network from scratch
+- Folder-level README files with detailed training instructions
+
+---
+DeepLearning-Project/ │ ├── PartA/ │ ├── PartA_notebook.ipynb # Contains model implementation and results │ ├── train_partA.py # Script to train the model │ └── README.md # Instructions for running and training │ ├── PartB/ │ ├── PartB_notebook.ipynb # Contains model implementation and results │ ├── train_partB.py # Script to train the model │ └── README.md # Instructions for running and training │ └── README.md # Main README file (you're here)
+
+
+---
+
+### 🔧 How to Use
+
+1. Navigate to either `PartA` or `PartB` depending on which part of the assignment you're interested in.
+2. Open the Jupyter notebook (`.ipynb`) to explore pre-recorded model runs and visualizations.
+3. Follow the instructions in the corresponding `README.md` file within each folder to train the model using the provided Python script.
+
+---
+
+### 📌 Requirements
+
+Make sure you have the required Python packages installed. You can typically install them using:
+
+
+
 
 ## Features  
 
